@@ -1,0 +1,5 @@
+#baseURL: https://example.org/
+baseURL: http://49.51.250.181:80
+languageCode: en-us
+title: Kang.Blog
+theme: ["PaperMod"]
