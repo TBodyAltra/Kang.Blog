@@ -16,10 +16,16 @@ jobs:
         with:
           node-version: '20'
           
+      - name: Configure Git
+        run: |
+          git config --global user.name "Kang Xu"
+          git config --global user.email "kang.xu92@outlook.com"
+          
       - name: Install Hexo
         run: |
           npm install -g hexo-cli
           npm install
+          npm install hexo-deployer-git --save
           
       - name: Deploy
         run: |
