@@ -8,6 +8,8 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       
@@ -25,9 +27,8 @@ jobs:
         run: |
           npm install -g hexo-cli
           npm install
-          npm install hexo-deployer-git --save
           
-      - name: Deploy
+      - name: Deploy to GitHub Pages
         run: |
           hexo clean
           hexo deploy
