@@ -1,8 +1,13 @@
-name: Deploy
+name: Deploy to GitHub Pages
 
 on:
   push:
     branches: [master]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
 
 jobs:
   build-and-deploy:
@@ -25,9 +30,7 @@ jobs:
           hexo generate
           
       - name: Deploy
-        run: |
-          git config --global user.name "Kang Xu"
-          git config --global user.email "kang.xu92@outlook.com"
-          hexo deploy
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./public
