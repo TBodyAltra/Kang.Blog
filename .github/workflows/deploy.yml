@@ -10,6 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pages: write
+    concurrency:
+      group: "github-pages"
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
       
@@ -18,19 +22,16 @@ jobs:
         with:
           node-version: '20'
           
-      - name: Configure Git
-        run: |
-          git config --global user.name "Kang Xu"
-          git config --global user.email "kang.xu92@outlook.com"
-          
       - name: Install Hexo
         run: |
           npm install -g hexo-cli
           npm install
           
-      - name: Deploy to GitHub Pages
-        run: |
-          hexo clean
-          hexo deploy
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build
+        run: hexo clean && hexo generate
+          
+      - name: Deploy
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./public
