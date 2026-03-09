@@ -4,3 +4,6 @@ deploy:
   repo: https://github.com/TBodyAltra/Kang.Blog.git
   branch: master
 unsafe: true
+
+# Disable Jekyll
+disable_jekyll: true
