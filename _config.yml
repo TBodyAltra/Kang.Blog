@@ -1,0 +1,5 @@
+# Deployment
+deploy:
+  type: git
+  repo: https://github.com/TBodyAltra/Kang.Blog.git
+  branch: master
