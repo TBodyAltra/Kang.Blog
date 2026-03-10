@@ -10,3 +10,16 @@ math:
   mathjax:
     enableMenu: true
     tags: none
+
+# Author avatar + follow link overrides
+avatar:
+  img: https://github.com/TBodyAltra.png
+  effect: false
+
+aside:
+  card_author:
+    button:
+      enable: true
+      icon: fab fa-github
+      text: Follow Me
+      link: https://github.com/TBodyAltra
