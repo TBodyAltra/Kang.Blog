@@ -1,4 +1,5 @@
 # Hexo Configuration
+title: Kang Blog
 deploy:
   type: git
   repo: https://github.com/TBodyAltra/Kang.Blog.git
@@ -6,3 +7,19 @@ deploy:
 
 theme: butterfly
 url: https://tbodyaltra.github.io/Kang.Blog
+
+author: TBodyAltra
+social:
+  github: https://github.com/TBodyAltra
+
+post_asset_folder: true
+
+mathjax:
+  enable: true
+  path: ""
+  per_page: 10
+  order_by: -date
+index_generator:
+  path: ''
+  per_page: 10
+  order_by: -date

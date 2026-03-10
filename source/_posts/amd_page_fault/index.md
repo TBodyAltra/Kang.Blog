@@ -18,7 +18,7 @@ title: '一个关于 AMDGPU Page Fault 的报错排查'
 
 当我完成函数代码的编写，并且成功编译到可执行文件，看起来一切顺利。但是当我运行可执行文件的时候，意外发生了，出现了 Page Fault 的错误。
 
-![Untitled](Untitled.png)
+![Untitled](../Untitled.png)
 
 # 原因分析
 
@@ -66,7 +66,7 @@ Entry:
 
 通过下面的汇编可以看到，flat_load_sbyte 指令面对的地址是 0x8，这显然不是一个合法的虚拟地址。
 
-![Untitled](Untitled%201.png)
+![Untitled](../Untitled%201.png)
 
 我猜测 %0 是不包含地址空间的信息的，只要将其先转到 i8 addrspace(5)* 再进行加载（此时汇编指令是 buffer_load_sbyte），那也就不需要额外的地址空间信息，因此是没有问题的。但是我大意了没有转。
 
