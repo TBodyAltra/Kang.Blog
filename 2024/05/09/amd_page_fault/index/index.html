@@ -7,7 +7,7 @@
 <meta property="og:locale" content="en_US">
 <meta property="og:image" content="https://avatars.githubusercontent.com/u/125636483?v=400&size=400">
 <meta property="article:published_time" content="2024-05-09T12:29:20.000Z">
-<meta property="article:modified_time" content="2026-03-10T14:30:28.673Z">
+<meta property="article:modified_time" content="2026-03-10T14:41:48.140Z">
 <meta property="article:author" content="TBodyAltra">
 <meta property="article:tag" content="AMD">
 <meta property="article:tag" content="GPGPU">
@@ -20,7 +20,7 @@
   "url": "https://tbodyaltra.github.io/Kang.Blog/2024/05/09/amd_page_fault/index/",
   "image": "https://avatars.githubusercontent.com/u/125636483?v=400&size=400",
   "datePublished": "2024-05-09T12:29:20.000Z",
-  "dateModified": "2026-03-10T14:30:28.673Z",
+  "dateModified": "2026-03-10T14:41:48.140Z",
   "author": [
     {
       "@type": "Person",
@@ -165,11 +165,11 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.css">
 
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/hexo-math@4.0.0/dist/style.css">
-<!-- hexo injector head_end end --><meta name="generator" content="Hexo 8.1.1"></head><body><div class="post" id="body-wrap"><header class="post-bg" id="page-header"><nav id="nav"><span id="blog-info"><a class="nav-site-title" href="/Kang.Blog/"><span class="site-name">Kang Blog</span></a><a class="nav-page-title" href="/Kang.Blog/"><span class="site-name">一个关于 AMDGPU Page Fault 的报错排查</span><span class="site-name"><i class="fa-solid fa-circle-arrow-left"></i><span>  Back to Home</span></span></a></span><div id="menus"><div id="search-button"><span class="site-page social-icon search"><i class="fas fa-search fa-fw"></i><span> Search</span></span></div></div></nav><div id="post-info"><h1 class="post-title">一个关于 AMDGPU Page Fault 的报错排查</h1><div id="post-meta"><div class="meta-firstline"><span class="post-meta-date"><i class="far fa-calendar-alt fa-fw post-meta-icon"></i><span class="post-meta-label">Created</span><time class="post-meta-date-created" datetime="2024-05-09T12:29:20.000Z" title="Created 2024-05-09 20:29:20">2024-05-09</time><span class="post-meta-separator">|</span><i class="fas fa-history fa-fw post-meta-icon"></i><span class="post-meta-label">Updated</span><time class="post-meta-date-updated" datetime="2026-03-10T14:30:28.673Z" title="Updated 2026-03-10 22:30:28">2026-03-10</time></span></div><div class="meta-secondline"><span class="post-meta-separator">|</span><span class="post-meta-pv-cv" id="" data-flag-title=""><i class="far fa-eye fa-fw post-meta-icon"></i><span class="post-meta-label">Post Views:</span><span id="busuanzi_value_page_pv"><i class="fa-solid fa-spinner fa-spin"></i></span></span></div></div></div></header><main class="layout" id="content-inner"><div id="post"><article class="container post-content" id="article-container"><h1 id="背景"><a href="#背景" class="headerlink" title="背景"></a>背景</h1><p>最近在做一个项目，其中涉及到构建一个函数，函数的输入是一个内存地址，函数需要解析这个内存地址中的值然后执行相应的动作。已知的是输入的内存地址是 int64 类型的数值，代表的是 amdgpu scratch memory 中的一个地址。</p>
+<!-- hexo injector head_end end --><meta name="generator" content="Hexo 8.1.1"></head><body><div class="post" id="body-wrap"><header class="post-bg" id="page-header"><nav id="nav"><span id="blog-info"><a class="nav-site-title" href="/Kang.Blog/"><span class="site-name">Kang Blog</span></a><a class="nav-page-title" href="/Kang.Blog/"><span class="site-name">一个关于 AMDGPU Page Fault 的报错排查</span><span class="site-name"><i class="fa-solid fa-circle-arrow-left"></i><span>  Back to Home</span></span></a></span><div id="menus"><div id="search-button"><span class="site-page social-icon search"><i class="fas fa-search fa-fw"></i><span> Search</span></span></div></div></nav><div id="post-info"><h1 class="post-title">一个关于 AMDGPU Page Fault 的报错排查</h1><div id="post-meta"><div class="meta-firstline"><span class="post-meta-date"><i class="far fa-calendar-alt fa-fw post-meta-icon"></i><span class="post-meta-label">Created</span><time class="post-meta-date-created" datetime="2024-05-09T12:29:20.000Z" title="Created 2024-05-09 20:29:20">2024-05-09</time><span class="post-meta-separator">|</span><i class="fas fa-history fa-fw post-meta-icon"></i><span class="post-meta-label">Updated</span><time class="post-meta-date-updated" datetime="2026-03-10T14:41:48.140Z" title="Updated 2026-03-10 22:41:48">2026-03-10</time></span></div><div class="meta-secondline"><span class="post-meta-separator">|</span><span class="post-meta-pv-cv" id="" data-flag-title=""><i class="far fa-eye fa-fw post-meta-icon"></i><span class="post-meta-label">Post Views:</span><span id="busuanzi_value_page_pv"><i class="fa-solid fa-spinner fa-spin"></i></span></span></div></div></div></header><main class="layout" id="content-inner"><div id="post"><article class="container post-content" id="article-container"><h1 id="背景"><a href="#背景" class="headerlink" title="背景"></a>背景</h1><p>最近在做一个项目，其中涉及到构建一个函数，函数的输入是一个内存地址，函数需要解析这个内存地址中的值然后执行相应的动作。已知的是输入的内存地址是 int64 类型的数值，代表的是 amdgpu scratch memory 中的一个地址。</p>
 <p>基于项目当前的架构，我的设计是在 opencl 中实现这个函数，然后将这个函数编译到一个 bitcode 文件中，作为一个 bitcode 文件，它可以在项目编译的时候通过 -mlink-builtin-bitcode 链接进来，调用方只需要在模块中正确地声明这个函数就可以。</p>
 <p>这个函数是在 runtime 执行的，因为在编译期间不能获取到内存中存的数值。</p>
 <h1 id="问题浮现"><a href="#问题浮现" class="headerlink" title="问题浮现"></a>问题浮现</h1><p>当我完成函数代码的编写，并且成功编译到可执行文件，看起来一切顺利。但是当我运行可执行文件的时候，意外发生了，出现了 Page Fault 的错误。</p>
-<p><img src="img/Untitled.png" alt="Untitled"></p>
+<p><img src="../img/Untitled.png" alt="Untitled"></p>
 <h1 id="原因分析"><a href="#原因分析" class="headerlink" title="原因分析"></a>原因分析</h1><p>经过一盘排查之后，发现问题出在加载了非法的指针地址。输入的指针地址指向的是 scratch 地址空间（i8 addrspace(5)<em>），为了可以访问这个地址，我通过 inttoptr 将其转换到了 generic 地址空间的指针（i8</em>），然后再访问这个地址。我用下面的伪代码来表达一下这番操作：</p>
 <figure class="highlight llvm"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">define</span> <span class="keyword">protected</span> <span class="type">void</span> <span class="type">void</span> <span class="title">@foo</span>(<span class="type">i64</span> <span class="variable">%0</span>) &#123;</span><br><span class="line">Entry:</span><br><span class="line">  <span class="variable">%1</span> <span class="operator">=</span> <span class="keyword">inttoptr</span> <span class="type">i64</span> <span class="variable">%0</span> <span class="keyword">to</span> <span class="type">i8</span>*</span><br><span class="line">  <span class="variable">%2</span> <span class="operator">=</span> <span class="keyword">load</span> <span class="type">i8</span><span class="punctuation">,</span> <span class="type">i8</span>* <span class="variable">%1</span><span class="punctuation">,</span> <span class="keyword">align</span> <span class="number">1</span></span><br><span class="line">  ...</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
 <p>而调用方首先通过 ptrtoint 将 i8 addrspace(5)* 转成了 int64，所以整个流程可以简化为下面的伪代码：</p>
@@ -182,7 +182,7 @@
 <p>64位地址模式的flat指令，需要vgpr的[48:46]==100才能取scratch空间的数据</p>
 </blockquote>
 <p>通过下面的汇编可以看到，flat_load_sbyte 指令面对的地址是 0x8，这显然不是一个合法的虚拟地址。</p>
-<p><img src="img/Untitled-1.png" alt="Untitled"></p>
+<p><img src="../img/Untitled-1.png" alt="Untitled"></p>
 <p>我猜测 %0 是不包含地址空间的信息的，只要将其先转到 i8 addrspace(5)* 再进行加载（此时汇编指令是 buffer_load_sbyte），那也就不需要额外的地址空间信息，因此是没有问题的。但是我大意了没有转。</p>
 <h1 id="关联的奇怪现象"><a href="#关联的奇怪现象" class="headerlink" title="关联的奇怪现象"></a>关联的奇怪现象</h1><h2 id="循环展开"><a href="#循环展开" class="headerlink" title="循环展开"></a>循环展开</h2><p>以上的 llvm ir 其实是可以被优化掉的，编译器会发现没有必要转来转去，而是会直接去访问原始的指针。实际上，以上的 llvm ir 片段是出现在一个 for 循环中，每次循环会访问这个地址的下一个元素。</p>
 <p>我在排查的时候发现，如果这个循环可以完全展开，比方说循环的次数是静态的，并且编译器将循环完全展开了，那么对这个地址访问的偏移都是静态的，编译器会将对应的 inttoptr 和 ptrtoint 都消掉，直接访问原始的指针，此时是不会出现显存错误的。</p>

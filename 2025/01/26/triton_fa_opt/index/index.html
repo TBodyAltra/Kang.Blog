@@ -7,7 +7,7 @@
 <meta property="og:locale" content="en_US">
 <meta property="og:image" content="https://avatars.githubusercontent.com/u/125636483?v=400&size=400">
 <meta property="article:published_time" content="2025-01-26T07:39:20.000Z">
-<meta property="article:modified_time" content="2026-03-10T14:30:28.673Z">
+<meta property="article:modified_time" content="2026-03-10T14:41:48.132Z">
 <meta property="article:author" content="TBodyAltra">
 <meta property="article:tag" content="AMDGPU">
 <meta property="article:tag" content="Flash-Attention">
@@ -21,7 +21,7 @@
   "url": "https://tbodyaltra.github.io/Kang.Blog/2025/01/26/triton_fa_opt/index/",
   "image": "https://avatars.githubusercontent.com/u/125636483?v=400&size=400",
   "datePublished": "2025-01-26T07:39:20.000Z",
-  "dateModified": "2026-03-10T14:30:28.673Z",
+  "dateModified": "2026-03-10T14:41:48.132Z",
   "author": [
     {
       "@type": "Person",
@@ -166,13 +166,13 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.css">
 
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/hexo-math@4.0.0/dist/style.css">
-<!-- hexo injector head_end end --><meta name="generator" content="Hexo 8.1.1"></head><body><div class="post" id="body-wrap"><header class="post-bg" id="page-header"><nav id="nav"><span id="blog-info"><a class="nav-site-title" href="/Kang.Blog/"><span class="site-name">Kang Blog</span></a><a class="nav-page-title" href="/Kang.Blog/"><span class="site-name">在 AMDGPU 上优化 Triton Flash-Attention</span><span class="site-name"><i class="fa-solid fa-circle-arrow-left"></i><span>  Back to Home</span></span></a></span><div id="menus"><div id="search-button"><span class="site-page social-icon search"><i class="fas fa-search fa-fw"></i><span> Search</span></span></div></div></nav><div id="post-info"><h1 class="post-title">在 AMDGPU 上优化 Triton Flash-Attention</h1><div id="post-meta"><div class="meta-firstline"><span class="post-meta-date"><i class="far fa-calendar-alt fa-fw post-meta-icon"></i><span class="post-meta-label">Created</span><time class="post-meta-date-created" datetime="2025-01-26T07:39:20.000Z" title="Created 2025-01-26 15:39:20">2025-01-26</time><span class="post-meta-separator">|</span><i class="fas fa-history fa-fw post-meta-icon"></i><span class="post-meta-label">Updated</span><time class="post-meta-date-updated" datetime="2026-03-10T14:30:28.673Z" title="Updated 2026-03-10 22:30:28">2026-03-10</time></span></div><div class="meta-secondline"><span class="post-meta-separator">|</span><span class="post-meta-pv-cv" id="" data-flag-title=""><i class="far fa-eye fa-fw post-meta-icon"></i><span class="post-meta-label">Post Views:</span><span id="busuanzi_value_page_pv"><i class="fa-solid fa-spinner fa-spin"></i></span></span></div></div></div></header><main class="layout" id="content-inner"><div id="post"><article class="container post-content" id="article-container"><p>最近在 AMDGPU 上优化用 Triton 实现的 Flash-Attention 算子，有一些优化手段值得记录下来。</p>
+<!-- hexo injector head_end end --><meta name="generator" content="Hexo 8.1.1"></head><body><div class="post" id="body-wrap"><header class="post-bg" id="page-header"><nav id="nav"><span id="blog-info"><a class="nav-site-title" href="/Kang.Blog/"><span class="site-name">Kang Blog</span></a><a class="nav-page-title" href="/Kang.Blog/"><span class="site-name">在 AMDGPU 上优化 Triton Flash-Attention</span><span class="site-name"><i class="fa-solid fa-circle-arrow-left"></i><span>  Back to Home</span></span></a></span><div id="menus"><div id="search-button"><span class="site-page social-icon search"><i class="fas fa-search fa-fw"></i><span> Search</span></span></div></div></nav><div id="post-info"><h1 class="post-title">在 AMDGPU 上优化 Triton Flash-Attention</h1><div id="post-meta"><div class="meta-firstline"><span class="post-meta-date"><i class="far fa-calendar-alt fa-fw post-meta-icon"></i><span class="post-meta-label">Created</span><time class="post-meta-date-created" datetime="2025-01-26T07:39:20.000Z" title="Created 2025-01-26 15:39:20">2025-01-26</time><span class="post-meta-separator">|</span><i class="fas fa-history fa-fw post-meta-icon"></i><span class="post-meta-label">Updated</span><time class="post-meta-date-updated" datetime="2026-03-10T14:41:48.132Z" title="Updated 2026-03-10 22:41:48">2026-03-10</time></span></div><div class="meta-secondline"><span class="post-meta-separator">|</span><span class="post-meta-pv-cv" id="" data-flag-title=""><i class="far fa-eye fa-fw post-meta-icon"></i><span class="post-meta-label">Post Views:</span><span id="busuanzi_value_page_pv"><i class="fa-solid fa-spinner fa-spin"></i></span></span></div></div></div></header><main class="layout" id="content-inner"><div id="post"><article class="container post-content" id="article-container"><p>最近在 AMDGPU 上优化用 Triton 实现的 Flash-Attention 算子，有一些优化手段值得记录下来。</p>
 <h1 id="通过调整-Block-发射顺序减少-SIMD-的-IDLE-时间"><a href="#通过调整-Block-发射顺序减少-SIMD-的-IDLE-时间" class="headerlink" title="通过调整 Block 发射顺序减少 SIMD 的 IDLE 时间"></a>通过调整 Block 发射顺序减少 SIMD 的 IDLE 时间</h1><p>FA 的 Triton 实现中，将 Q 在 M 方向切分为了不同的 block。在前向过程中，如果 causal = True，那么 Q 只有左下三角的元素参与计载。即参与计算的元素在 M 方向从上到下逐渐增加。在默认的实现中，block 是从上到下按序发射的，即先发射负载小的块，再发射负载大的块。由于负载较大的块难以被分配到 SIMD 上，因此导致了较大的 SIMD IDLE。通过从倒序从下到上发射块，即先发射负载大的块，再发射负载小的块，由于负载小的块可以被更均衡地分配到各 SIMD 上，因此可以有效减少 SIMD IDLE。</p>
 <div class="table-container">
 <table>
 <thead>
 <tr>
-<th style="text-align:center"><img src="img/large_idle.jpg" alt="large idle"></th>
+<th style="text-align:center"><img src="../img/large_idle.jpg" alt="large idle"></th>
 </tr>
 </thead>
 <tbody>
@@ -186,7 +186,7 @@
 <table>
 <thead>
 <tr>
-<th style="text-align:center"><img src="img/small_idle.jpg" alt="small idle"></th>
+<th style="text-align:center"><img src="../img/small_idle.jpg" alt="small idle"></th>
 </tr>
 </thead>
 <tbody>
