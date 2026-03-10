@@ -1,0 +1,205 @@
+<!DOCTYPE html><html lang="en" data-theme="light"><head><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover"><title>在 AMDGPU 上优化 Triton Flash-Attention | Kang Blog</title><meta name="author" content="TBodyAltra"><meta name="copyright" content="TBodyAltra"><meta name="format-detection" content="telephone=no"><meta name="theme-color" content="#ffffff"><meta name="description" content="最近在 AMDGPU 上优化用 Triton 实现的 Flash-Attention 算子，有一些优化手段值得记录下来。 通过调整 Block 发射顺序减少 SIMD 的 IDLE 时间FA 的 Triton 实现中，将 Q 在 M 方向切分为了不同的 block。在前向过程中，如果 causal &#x3D; True，那么 Q 只有左下三角的元素参与计载。即参与计算的元素在 M 方向从上到下逐渐增加。在">
+<meta property="og:type" content="article">
+<meta property="og:title" content="在 AMDGPU 上优化 Triton Flash-Attention">
+<meta property="og:url" content="https://tbodyaltra.github.io/Kang.Blog/2025/01/26/triton_fa_opt/index/index.html">
+<meta property="og:site_name" content="Kang Blog">
+<meta property="og:description" content="最近在 AMDGPU 上优化用 Triton 实现的 Flash-Attention 算子，有一些优化手段值得记录下来。 通过调整 Block 发射顺序减少 SIMD 的 IDLE 时间FA 的 Triton 实现中，将 Q 在 M 方向切分为了不同的 block。在前向过程中，如果 causal &#x3D; True，那么 Q 只有左下三角的元素参与计载。即参与计算的元素在 M 方向从上到下逐渐增加。在">
+<meta property="og:locale" content="en_US">
+<meta property="og:image" content="https://tbodyaltra.github.io/Kang.Blog/img/butterfly-icon.png">
+<meta property="article:published_time" content="2025-01-26T07:39:20.000Z">
+<meta property="article:modified_time" content="2026-03-10T15:13:21.183Z">
+<meta property="article:author" content="TBodyAltra">
+<meta property="article:tag" content="AMDGPU">
+<meta property="article:tag" content="Flash-Attention">
+<meta property="article:tag" content="GPGPU">
+<meta property="article:tag" content="Triton">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://tbodyaltra.github.io/Kang.Blog/img/butterfly-icon.png"><script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "在 AMDGPU 上优化 Triton Flash-Attention",
+  "url": "https://tbodyaltra.github.io/Kang.Blog/2025/01/26/triton_fa_opt/index/",
+  "image": "https://tbodyaltra.github.io/Kang.Blog/img/butterfly-icon.png",
+  "datePublished": "2025-01-26T07:39:20.000Z",
+  "dateModified": "2026-03-10T15:13:21.183Z",
+  "author": [
+    {
+      "@type": "Person",
+      "name": "TBodyAltra",
+      "url": "https://tbodyaltra.github.io/Kang.Blog"
+    }
+  ]
+}</script><link rel="shortcut icon" href="/Kang.Blog/img/favicon.png"><link rel="canonical" href="https://tbodyaltra.github.io/Kang.Blog/2025/01/26/triton_fa_opt/index/index.html"><link rel="preconnect" href="//cdn.jsdelivr.net"/><link rel="preconnect" href="//busuanzi.ibruce.info"/><link rel="stylesheet" href="/Kang.Blog/css/index.css?v=5.5.4"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@7.1.0/css/all.min.css"><script>
+    (() => {
+      
+    const saveToLocal = {
+      set: (key, value, ttl) => {
+        if (!ttl) return
+        const expiry = Date.now() + ttl * 86400000
+        localStorage.setItem(key, JSON.stringify({ value, expiry }))
+      },
+      get: key => {
+        const itemStr = localStorage.getItem(key)
+        if (!itemStr) return undefined
+        const { value, expiry } = JSON.parse(itemStr)
+        if (Date.now() > expiry) {
+          localStorage.removeItem(key)
+          return undefined
+        }
+        return value
+      }
+    }
+
+    window.btf = {
+      saveToLocal,
+      getScript: (url, attr = {}) => new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = url
+        script.async = true
+        Object.entries(attr).forEach(([key, val]) => script.setAttribute(key, val))
+        script.onload = script.onreadystatechange = () => {
+          if (!script.readyState || /loaded|complete/.test(script.readyState)) resolve()
+        }
+        script.onerror = reject
+        document.head.appendChild(script)
+      }),
+      getCSS: (url, id) => new Promise((resolve, reject) => {
+        const link = document.createElement('link')
+        link.rel = 'stylesheet'
+        link.href = url
+        if (id) link.id = id
+        link.onload = link.onreadystatechange = () => {
+          if (!link.readyState || /loaded|complete/.test(link.readyState)) resolve()
+        }
+        link.onerror = reject
+        document.head.appendChild(link)
+      }),
+      addGlobalFn: (key, fn, name = false, parent = window) => {
+        if (!false && key.startsWith('pjax')) return
+        const globalFn = parent.globalFn || {}
+        globalFn[key] = globalFn[key] || {}
+        globalFn[key][name || Object.keys(globalFn[key]).length] = fn
+        parent.globalFn = globalFn
+      }
+    }
+  
+      
+      const activateDarkMode = () => {
+        document.documentElement.setAttribute('data-theme', 'dark')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#0d0d0d')
+        }
+      }
+      const activateLightMode = () => {
+        document.documentElement.setAttribute('data-theme', 'light')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#ffffff')
+        }
+      }
+
+      btf.activateDarkMode = activateDarkMode
+      btf.activateLightMode = activateLightMode
+
+      const theme = saveToLocal.get('theme')
+    
+          theme === 'dark' ? activateDarkMode() : theme === 'light' ? activateLightMode() : null
+        
+      
+      const asideStatus = saveToLocal.get('aside-status')
+      if (asideStatus !== undefined) {
+        document.documentElement.classList.toggle('hide-aside', asideStatus === 'hide')
+      }
+    
+      
+    const detectApple = () => {
+      if (/iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent)) {
+        document.documentElement.classList.add('apple')
+      }
+    }
+    detectApple()
+  
+    })()
+  </script><script>const GLOBAL_CONFIG = {
+  root: '/Kang.Blog/',
+  algolia: undefined,
+  localSearch: undefined,
+  translate: undefined,
+  highlight: {"plugin":"highlight.js","highlightCopy":true,"highlightLang":true,"highlightHeightLimit":false,"highlightFullpage":false,"highlightMacStyle":false},
+  copy: {
+    success: 'Copy Successful',
+    error: 'Copy Failed',
+    noSupport: 'Browser Not Supported'
+  },
+  relativeDate: {
+    homepage: false,
+    post: false
+  },
+  runtime: '',
+  dateSuffix: {
+    just: 'Just now',
+    min: 'minutes ago',
+    hour: 'hours ago',
+    day: 'days ago',
+    month: 'months ago'
+  },
+  copyright: undefined,
+  lightbox: 'null',
+  Snackbar: undefined,
+  infinitegrid: {
+    js: 'https://cdn.jsdelivr.net/npm/@egjs/infinitegrid@4.13.0/dist/infinitegrid.min.js',
+    buttonText: 'Load More'
+  },
+  isPhotoFigcaption: false,
+  islazyloadPlugin: false,
+  isAnchor: false,
+  percent: {
+    toc: true,
+    rightside: false,
+  },
+  autoDarkmode: false
+}</script><script id="config-diff">var GLOBAL_CONFIG_SITE = {
+  title: '在 AMDGPU 上优化 Triton Flash-Attention',
+  isHighlightShrink: false,
+  isToc: true,
+  pageType: 'post'
+}</script><!-- hexo injector head_end start -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.css">
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/hexo-math@4.0.0/dist/style.css">
+<!-- hexo injector head_end end --><meta name="generator" content="Hexo 8.1.1"></head><body><div class="post" id="body-wrap"><header class="post-bg" id="page-header"><nav id="nav"><span id="blog-info"><a class="nav-site-title" href="/Kang.Blog/"><span class="site-name">Kang Blog</span></a><a class="nav-page-title" href="/Kang.Blog/"><span class="site-name">在 AMDGPU 上优化 Triton Flash-Attention</span><span class="site-name"><i class="fa-solid fa-circle-arrow-left"></i><span>  Back to Home</span></span></a></span><div id="menus"></div></nav><div id="post-info"><h1 class="post-title">在 AMDGPU 上优化 Triton Flash-Attention</h1><div id="post-meta"><div class="meta-firstline"><span class="post-meta-date"><i class="far fa-calendar-alt fa-fw post-meta-icon"></i><span class="post-meta-label">Created</span><time class="post-meta-date-created" datetime="2025-01-26T07:39:20.000Z" title="Created 2025-01-26 07:39:20">2025-01-26</time><span class="post-meta-separator">|</span><i class="fas fa-history fa-fw post-meta-icon"></i><span class="post-meta-label">Updated</span><time class="post-meta-date-updated" datetime="2026-03-10T15:13:21.183Z" title="Updated 2026-03-10 15:13:21">2026-03-10</time></span></div><div class="meta-secondline"><span class="post-meta-separator">|</span><span class="post-meta-pv-cv" id="" data-flag-title=""><i class="far fa-eye fa-fw post-meta-icon"></i><span class="post-meta-label">Post Views:</span><span id="busuanzi_value_page_pv"><i class="fa-solid fa-spinner fa-spin"></i></span></span></div></div></div></header><main class="layout" id="content-inner"><div id="post"><article class="container post-content" id="article-container"><p>最近在 AMDGPU 上优化用 Triton 实现的 Flash-Attention 算子，有一些优化手段值得记录下来。</p>
+<h1 id="通过调整-Block-发射顺序减少-SIMD-的-IDLE-时间"><a href="#通过调整-Block-发射顺序减少-SIMD-的-IDLE-时间" class="headerlink" title="通过调整 Block 发射顺序减少 SIMD 的 IDLE 时间"></a>通过调整 Block 发射顺序减少 SIMD 的 IDLE 时间</h1><p>FA 的 Triton 实现中，将 Q 在 M 方向切分为了不同的 block。在前向过程中，如果 causal = True，那么 Q 只有左下三角的元素参与计载。即参与计算的元素在 M 方向从上到下逐渐增加。在默认的实现中，block 是从上到下按序发射的，即先发射负载小的块，再发射负载大的块。由于负载较大的块难以被分配到 SIMD 上，因此导致了较大的 SIMD IDLE。通过从倒序从下到上发射块，即先发射负载大的块，再发射负载小的块，由于负载小的块可以被更均衡地分配到各 SIMD 上，因此可以有效减少 SIMD IDLE。</p>
+<div class="table-container">
+<table>
+<thead>
+<tr>
+<th style="text-align:center"><img src="large_idle.jpg" alt="large idle"></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:center"><em>先发射负载小的块，再发射负载大的块，导致较大的 SIMD IDLE</em></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="table-container">
+<table>
+<thead>
+<tr>
+<th style="text-align:center"><img src="small_idle.jpg" alt="small idle"></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:center"><em>先发射负载大的块，再发射负载小的块，可以减少 SIMD IDLE</em></td>
+</tr>
+</tbody>
+</table>
+</div>
+<h1 id="通过实现-chain-dot-减少对-LDS-的访存"><a href="#通过实现-chain-dot-减少对-LDS-的访存" class="headerlink" title="通过实现 chain-dot 减少对 LDS 的访存"></a>通过实现 chain-dot 减少对 LDS 的访存</h1><p>在我们的硬件规范下，Q 和 K 矩阵乘的结果 QK 的 Layout 跟 Q 是不同的，因此需要先将 QK 的 Layout 转到跟 Q 一样才可以继续与 V 进行矩阵乘（和 Q 一样作为第一个操作数）。可以通过插入一些寄存器指令对线程之间的数据进行交换，以避免通过写入写出 LDS 来进行 Layout 的转换，这些指令（例如 bpermute, swizzle 等）的开销远小于 LDS 访存。</p>
+<h1 id="通过优化-Layout-增加-Global-Memory-访存效率"><a href="#通过优化-Layout-增加-Global-Memory-访存效率" class="headerlink" title="通过优化 Layout 增加 Global Memory 访存效率"></a>通过优化 Layout 增加 Global Memory 访存效率</h1><p>在我们的硬件规范下，mmac 的结果的 Layout 对于 Global Memory 的访存不太友好。因为在这个 Layout 下，同一个线程所占有的元素在矩阵中的地址不连续，如果直接保存的话，访存效率很低。例如假设结果的数据类型是f16，那么生成的汇编将会是 global_store_short（每条指令仅保存一个元素）。通过在 LDS 中将 Layout 进行转换，使得同一个线程所拥有的元素在矩阵中的地址尽量连续，可以使得汇编中生成 global_store_dwordx4（每条指令保存16个byte，也就是8个元素）。</p>
+<h1 id="通过调整-Grid-排布增加-L2-Cache-Hit"><a href="#通过调整-Grid-排布增加-L2-Cache-Hit" class="headerlink" title="通过调整 Grid 排布增加 L2 Cache Hit"></a>通过调整 Grid 排布增加 L2 Cache Hit</h1><h1 id="重新实现-Torch-的部分-Kernel"><a href="#重新实现-Torch-的部分-Kernel" class="headerlink" title="重新实现 Torch 的部分 Kernel"></a>重新实现 Torch 的部分 Kernel</h1><p>Torch 内嵌的操作在我们的硬件上效率比较低，比方说 Transpose 等操作，通过重新实现这些函数的核函数取得了一些性能上的提升。</p>
+<h1 id="使用-Buffer-Load-Store-替换-Global-Load-Store"><a href="#使用-Buffer-Load-Store-替换-Global-Load-Store" class="headerlink" title="使用 Buffer Load/Store 替换 Global Load/Store"></a>使用 Buffer Load/Store 替换 Global Load/Store</h1><p>Buffer 可以传递 cache modifier，也可以通过配置 rsrc modifer 来增加 L1 Cache 的命中率（尚未实验）。</p>
+<h1 id="在-Global-Load-Store-指令中使用-SGPR-基地址而不是-VGPR-基地址"><a href="#在-Global-Load-Store-指令中使用-SGPR-基地址而不是-VGPR-基地址" class="headerlink" title="在 Global Load/Store 指令中使用 SGPR 基地址而不是 VGPR 基地址"></a>在 Global Load/Store 指令中使用 SGPR 基地址而不是 VGPR 基地址</h1><p>因为 SGPR 指令比 VGPR 指令更便宜。</p>
+<h1 id="对矩阵进行必要的转置以提高访存效率"><a href="#对矩阵进行必要的转置以提高访存效率" class="headerlink" title="对矩阵进行必要的转置以提高访存效率"></a>对矩阵进行必要的转置以提高访存效率</h1><p>使得对矩阵的访问尽量是内存地址连续的。</p>
+<h1 id="外提循环不变量以减少-VGPR-压力"><a href="#外提循环不变量以减少-VGPR-压力" class="headerlink" title="外提循环不变量以减少 VGPR 压力"></a>外提循环不变量以减少 VGPR 压力</h1></article><div class="post-copyright"><div class="post-copyright__author"><span class="post-copyright-meta"><i class="fas fa-circle-user fa-fw"></i>Author: </span><span class="post-copyright-info"><a href="https://tbodyaltra.github.io/Kang.Blog">TBodyAltra</a></span></div><div class="post-copyright__type"><span class="post-copyright-meta"><i class="fas fa-square-arrow-up-right fa-fw"></i>Link: </span><span class="post-copyright-info"><a href="https://tbodyaltra.github.io/Kang.Blog/2025/01/26/triton_fa_opt/index/">https://tbodyaltra.github.io/Kang.Blog/2025/01/26/triton_fa_opt/index/</a></span></div><div class="post-copyright__notice"><span class="post-copyright-meta"><i class="fas fa-circle-exclamation fa-fw"></i>Copyright Notice: </span><span class="post-copyright-info">All articles on this blog are licensed under <a target="_blank" rel="noopener" href="https://creativecommons.org/licenses/by-nc-sa/4.0/">CC BY-NC-SA 4.0</a> unless otherwise stated.</span></div></div><div class="tag_share"><div class="post-meta__tag-list"><a class="post-meta__tags" href="/Kang.Blog/tags/GPGPU/">GPGPU</a><a class="post-meta__tags" href="/Kang.Blog/tags/Flash-Attention/">Flash-Attention</a><a class="post-meta__tags" href="/Kang.Blog/tags/AMDGPU/">AMDGPU</a><a class="post-meta__tags" href="/Kang.Blog/tags/Triton/">Triton</a></div><div class="post-share"><div class="social-share" data-image="/Kang.Blog/img/butterfly-icon.png" data-sites="facebook,x,wechat,weibo,qq"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/css/share.min.css" media="print" onload="this.media='all'"><script src="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/js/social-share.min.js" defer></script></div></div><nav class="pagination-post" id="pagination"><a class="pagination-related" href="/Kang.Blog/2026/03/10/%E4%BC%81%E4%B8%9AAI%20Agent%E5%AE%89%E5%85%A8%E9%83%A8%E7%BD%B2%E4%B8%8E%E4%BB%BB%E5%8A%A1%E8%B0%83%E5%BA%A6%E7%B3%BB%E7%BB%9F/%E4%BC%81%E4%B8%9AAI%20Agent%E5%AE%89%E5%85%A8%E9%83%A8%E7%BD%B2%E4%B8%8E%E4%BB%BB%E5%8A%A1%E8%B0%83%E5%BA%A6%E7%B3%BB%E7%BB%9F/" title="企业AI Agent安全部署与任务调度系统"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info"><div class="info-1"><div class="info-item-1">Previous</div><div class="info-item-2">企业AI Agent安全部署与任务调度系统</div></div><div class="info-2"><div class="info-item-1">企业AI Agent安全部署与任务调度系统背景介绍随着大语言模型（LLM）技术的快速发展，AI Agent 在企业研发、运维、客服等领域得到广泛应用。然而，当前企业部署 AI Agent 面临诸多挑战：  数据泄露风险 - 员工本地 AI Agent 调用外部云服务时，敏感业务数据需要通过公网传输 权限难以管控 - AI Agent 难以精细控制其对公司内部系统的访问权限 资源分配不均 - 简单任务占用高端算力资源，专业任务缺乏足够算力支撑 审计追溯困难 - AI Agent 的操作行为缺乏完整的日志记录  系统架构本方案采用五层架构设计： 12345678910111213141516171819┌─────────────────────────────────────────────────────────┐│                    终端 Agent 层 (OpenClaw)              ││   • tmux会话管理  • 任务路由  • SSH客户端             │└────────────────────────────┬──...</div></div></div></a><a class="pagination-related" href="/Kang.Blog/2025/01/17/FA_MUBUF_Bug/" title="用 MUBUF 替换 FA Kernel 中的 GLOBAL 指令引起了概率错误"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-right"><div class="info-1"><div class="info-item-1">Next</div><div class="info-item-2">用 MUBUF 替换 FA Kernel 中的 GLOBAL 指令引起了概率错误</div></div><div class="info-2"><div class="info-item-1">最近在优化用 triton 写的 flash-attention 的算子的性能，有一个优化是用 MUBUF 指令（buffer_load_dowrdx4，buffer_store_dwordx4 等）替换 GLOBAL 指令（global_store_dwordx4，global_store_dwordx4等），因为通过利用 MUBUF 的 swizzle 的特性可以增加对 L1 Cache 的利用率，同时 MUBUF 指令可以传递一些有用的 cache modifer。 替换完成之后，在 Z 卡上验证精度没有问题，但是在 B 卡上却出现了概率性的精度问题。起初怀疑是在 B 卡上的编译结果有问题，但是直接将 Z 卡上的汇编文件编译到目标为 B 卡的二进制之后，在 B 卡上仍然有精度问题。 仔细对比了 MUBUF 指令替换前后的 LLVM IR，但是看不出来有任何问题。又对比 golden 数据和 triton 的结果，发现错误的数据存在一些规律，但是错误的坐标和数值也存在随机性。于是不再纠结数据是否正确，转而去看是什么原因导致了结果的随机性。有个这个目标后，不断地简化 flash...</div></div></div></a></nav><div class="relatedPosts"><div class="headline"><i class="fas fa-thumbs-up fa-fw"></i><span>Related Articles</span></div><div class="relatedPosts-list"><a class="pagination-related" href="/Kang.Blog/2025/01/17/FA_MUBUF_Bug/" title="用 MUBUF 替换 FA Kernel 中的 GLOBAL 指令引起了概率错误"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2025-01-17</div><div class="info-item-2">用 MUBUF 替换 FA Kernel 中的 GLOBAL 指令引起了概率错误</div></div><div class="info-2"><div class="info-item-1">最近在优化用 triton 写的 flash-attention 的算子的性能，有一个优化是用 MUBUF 指令（buffer_load_dowrdx4，buffer_store_dwordx4 等）替换 GLOBAL 指令（global_store_dwordx4，global_store_dwordx4等），因为通过利用 MUBUF 的 swizzle 的特性可以增加对 L1 Cache 的利用率，同时 MUBUF 指令可以传递一些有用的 cache modifer。 替换完成之后，在 Z 卡上验证精度没有问题，但是在 B 卡上却出现了概率性的精度问题。起初怀疑是在 B 卡上的编译结果有问题，但是直接将 Z 卡上的汇编文件编译到目标为 B 卡的二进制之后，在 B 卡上仍然有精度问题。 仔细对比了 MUBUF 指令替换前后的 LLVM IR，但是看不出来有任何问题。又对比 golden 数据和 triton 的结果，发现错误的数据存在一些规律，但是错误的坐标和数值也存在随机性。于是不再纠结数据是否正确，转而去看是什么原因导致了结果的随机性。有个这个目标后，不断地简化 flash...</div></div></div></a><a class="pagination-related" href="/Kang.Blog/2024/05/09/amd_page_fault/index/" title="一个关于 AMDGPU Page Fault 的报错排查"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-05-09</div><div class="info-item-2">一个关于 AMDGPU Page Fault 的报错排查</div></div><div class="info-2"><div class="info-item-1">背景最近在做一个项目，其中涉及到构建一个函数，函数的输入是一个内存地址，函数需要解析这个内存地址中的值然后执行相应的动作。已知的是输入的内存地址是 int64 类型的数值，代表的是 amdgpu scratch memory 中的一个地址。 基于项目当前的架构，我的设计是在 opencl 中实现这个函数，然后将这个函数编译到一个 bitcode 文件中，作为一个 bitcode 文件，它可以在项目编译的时候通过 -mlink-builtin-bitcode 链接进来，调用方只需要在模块中正确地声明这个函数就可以。 这个函数是在 runtime 执行的，因为在编译期间不能获取到内存中存的数值。 问题浮现当我完成函数代码的编写，并且成功编译到可执行文件，看起来一切顺利。但是当我运行可执行文件的时候，意外发生了，出现了 Page Fault 的错误。  原因分析经过一盘排查之后，发现问题出在加载了非法的指针地址。输入的指针地址指向的是 scratch 地址空间（i8 addrspace(5)），为了可以访问这个地址，我通过 inttoptr 将其转换到了 generic 地址空间的指针...</div></div></div></a></div></div></div><div class="aside-content" id="aside-content"><div class="card-widget card-info text-center"><div class="avatar-img"><img src="/Kang.Blog/img/butterfly-icon.png" onerror="this.onerror=null;this.src='/Kang.Blog/img/friend_404.gif'" alt="avatar"/></div><div class="author-info-name">TBodyAltra</div><div class="author-info-description"></div><div class="site-data"><a href="/Kang.Blog/archives/"><div class="headline">Articles</div><div class="length-num">11</div></a><a href="/Kang.Blog/tags/"><div class="headline">Tags</div><div class="length-num">15</div></a><a href="/Kang.Blog/categories/"><div class="headline">Categories</div><div class="length-num">1</div></a></div><a id="card-info-btn" target="_blank" rel="noopener" href="https://github.com/xxxxxx"><i class="fab fa-github"></i><span>Follow Me</span></a></div><div class="card-widget card-announcement"><div class="item-headline"><i class="fas fa-bullhorn fa-shake"></i><span>Announcement</span></div><div class="announcement_content">This is my Blog</div></div><div class="sticky_layout"><div class="card-widget" id="card-toc"><div class="item-headline"><i class="fas fa-stream"></i><span>Contents</span><span class="toc-percentage"></span></div><div class="toc-content"><ol class="toc"><li class="toc-item toc-level-1"><a class="toc-link" href="#%E9%80%9A%E8%BF%87%E8%B0%83%E6%95%B4-Block-%E5%8F%91%E5%B0%84%E9%A1%BA%E5%BA%8F%E5%87%8F%E5%B0%91-SIMD-%E7%9A%84-IDLE-%E6%97%B6%E9%97%B4"><span class="toc-number">1.</span> <span class="toc-text">通过调整 Block 发射顺序减少 SIMD 的 IDLE 时间</span></a></li><li class="toc-item toc-level-1"><a class="toc-link" href="#%E9%80%9A%E8%BF%87%E5%AE%9E%E7%8E%B0-chain-dot-%E5%87%8F%E5%B0%91%E5%AF%B9-LDS-%E7%9A%84%E8%AE%BF%E5%AD%98"><span class="toc-number">2.</span> <span class="toc-text">通过实现 chain-dot 减少对 LDS 的访存</span></a></li><li class="toc-item toc-level-1"><a class="toc-link" href="#%E9%80%9A%E8%BF%87%E4%BC%98%E5%8C%96-Layout-%E5%A2%9E%E5%8A%A0-Global-Memory-%E8%AE%BF%E5%AD%98%E6%95%88%E7%8E%87"><span class="toc-number">3.</span> <span class="toc-text">通过优化 Layout 增加 Global Memory 访存效率</span></a></li><li class="toc-item toc-level-1"><a class="toc-link" href="#%E9%80%9A%E8%BF%87%E8%B0%83%E6%95%B4-Grid-%E6%8E%92%E5%B8%83%E5%A2%9E%E5%8A%A0-L2-Cache-Hit"><span class="toc-number">4.</span> <span class="toc-text">通过调整 Grid 排布增加 L2 Cache Hit</span></a></li><li class="toc-item toc-level-1"><a class="toc-link" href="#%E9%87%8D%E6%96%B0%E5%AE%9E%E7%8E%B0-Torch-%E7%9A%84%E9%83%A8%E5%88%86-Kernel"><span class="toc-number">5.</span> <span class="toc-text">重新实现 Torch 的部分 Kernel</span></a></li><li class="toc-item toc-level-1"><a class="toc-link" href="#%E4%BD%BF%E7%94%A8-Buffer-Load-Store-%E6%9B%BF%E6%8D%A2-Global-Load-Store"><span class="toc-number">6.</span> <span class="toc-text">使用 Buffer Load&#x2F;Store 替换 Global Load&#x2F;Store</span></a></li><li class="toc-item toc-level-1"><a class="toc-link" href="#%E5%9C%A8-Global-Load-Store-%E6%8C%87%E4%BB%A4%E4%B8%AD%E4%BD%BF%E7%94%A8-SGPR-%E5%9F%BA%E5%9C%B0%E5%9D%80%E8%80%8C%E4%B8%8D%E6%98%AF-VGPR-%E5%9F%BA%E5%9C%B0%E5%9D%80"><span class="toc-number">7.</span> <span class="toc-text">在 Global Load&#x2F;Store 指令中使用 SGPR 基地址而不是 VGPR 基地址</span></a></li><li class="toc-item toc-level-1"><a class="toc-link" href="#%E5%AF%B9%E7%9F%A9%E9%98%B5%E8%BF%9B%E8%A1%8C%E5%BF%85%E8%A6%81%E7%9A%84%E8%BD%AC%E7%BD%AE%E4%BB%A5%E6%8F%90%E9%AB%98%E8%AE%BF%E5%AD%98%E6%95%88%E7%8E%87"><span class="toc-number">8.</span> <span class="toc-text">对矩阵进行必要的转置以提高访存效率</span></a></li><li class="toc-item toc-level-1"><a class="toc-link" href="#%E5%A4%96%E6%8F%90%E5%BE%AA%E7%8E%AF%E4%B8%8D%E5%8F%98%E9%87%8F%E4%BB%A5%E5%87%8F%E5%B0%91-VGPR-%E5%8E%8B%E5%8A%9B"><span class="toc-number">9.</span> <span class="toc-text">外提循环不变量以减少 VGPR 压力</span></a></li></ol></div></div><div class="card-widget card-recent-post"><div class="item-headline"><i class="fas fa-history"></i><span>Recent Posts</span></div><div class="aside-list"><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/Kang.Blog/2026/03/10/%E4%BC%81%E4%B8%9AAI%20Agent%E5%AE%89%E5%85%A8%E9%83%A8%E7%BD%B2%E4%B8%8E%E4%BB%BB%E5%8A%A1%E8%B0%83%E5%BA%A6%E7%B3%BB%E7%BB%9F/%E4%BC%81%E4%B8%9AAI%20Agent%E5%AE%89%E5%85%A8%E9%83%A8%E7%BD%B2%E4%B8%8E%E4%BB%BB%E5%8A%A1%E8%B0%83%E5%BA%A6%E7%B3%BB%E7%BB%9F/" title="企业AI Agent安全部署与任务调度系统">企业AI Agent安全部署与任务调度系统</a><time datetime="2026-03-10T00:00:00.000Z" title="Created 2026-03-10 00:00:00">2026-03-10</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/Kang.Blog/2025/01/26/triton_fa_opt/index/" title="在 AMDGPU 上优化 Triton Flash-Attention">在 AMDGPU 上优化 Triton Flash-Attention</a><time datetime="2025-01-26T07:39:20.000Z" title="Created 2025-01-26 07:39:20">2025-01-26</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/Kang.Blog/2025/01/17/FA_MUBUF_Bug/" title="用 MUBUF 替换 FA Kernel 中的 GLOBAL 指令引起了概率错误">用 MUBUF 替换 FA Kernel 中的 GLOBAL 指令引起了概率错误</a><time datetime="2025-01-17T03:56:20.000Z" title="Created 2025-01-17 03:56:20">2025-01-17</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/Kang.Blog/2024/08/05/LLM_Homekit/" title="An Application of LLMs as HomeKit">An Application of LLMs as HomeKit</a><time datetime="2024-08-05T12:29:20.000Z" title="Created 2024-08-05 12:29:20">2024-08-05</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/Kang.Blog/2024/06/15/RethinkBayes/" title="重温贝叶斯定理">重温贝叶斯定理</a><time datetime="2024-06-15T12:29:20.000Z" title="Created 2024-06-15 12:29:20">2024-06-15</time></div></div></div></div></div></div></main><footer id="footer"><div class="footer-other"><div class="footer-copyright"><span class="copyright">&copy;&nbsp;2025 - 2026 By TBodyAltra</span><span class="framework-info"><span>Framework </span><a target="_blank" rel="noopener" href="https://hexo.io">Hexo 8.1.1</a><span class="footer-separator">|</span><span>Theme </span><a target="_blank" rel="noopener" href="https://github.com/jerryc127/hexo-theme-butterfly">Butterfly 5.5.4</a></span></div></div></footer></div><div id="rightside"><div id="rightside-config-hide"><button id="readmode" type="button" title="Reading Mode"><i class="fas fa-book-open"></i></button><button id="darkmode" type="button" title="Toggle Between Light and Dark Mode"><i class="fas fa-adjust"></i></button><button id="hide-aside-btn" type="button" title="Toggle Between Single-column and Double-column"><i class="fas fa-arrows-alt-h"></i></button></div><div id="rightside-config-show"><button id="rightside-config" type="button" title="Settings"><i class="fas fa-cog fa-spin"></i></button><button class="close" id="mobile-toc-button" type="button" title="Table of Contents"><i class="fas fa-list-ul"></i></button><button id="go-up" type="button" title="Back to Top"><span class="scroll-percent"></span><i class="fas fa-arrow-up"></i></button></div></div><div><script src="/Kang.Blog/js/utils.js?v=5.5.4"></script><script src="/Kang.Blog/js/main.js?v=5.5.4"></script><div class="js-pjax"></div><script async data-pjax src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script></div></body></html>
