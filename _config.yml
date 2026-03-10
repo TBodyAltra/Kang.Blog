@@ -2,6 +2,7 @@
 deploy:
   type: git
   repo: https://github.com/TBodyAltra/Kang.Blog.git
-  branch: master
+  branch: gh-pages
 
 theme: butterfly
+url: https://tbodyaltra.github.io/Kang.Blog
