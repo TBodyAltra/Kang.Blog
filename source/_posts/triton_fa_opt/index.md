@@ -10,11 +10,11 @@ title: '在 AMDGPU 上优化 Triton Flash-Attention'
 # 通过调整 Block 发射顺序减少 SIMD 的 IDLE 时间
 FA 的 Triton 实现中，将 Q 在 M 方向切分为了不同的 block。在前向过程中，如果 causal = True，那么 Q 只有左下三角的元素参与计载。即参与计算的元素在 M 方向从上到下逐渐增加。在默认的实现中，block 是从上到下按序发射的，即先发射负载小的块，再发射负载大的块。由于负载较大的块难以被分配到 SIMD 上，因此导致了较大的 SIMD IDLE。通过从倒序从下到上发射块，即先发射负载大的块，再发射负载小的块，由于负载小的块可以被更均衡地分配到各 SIMD 上，因此可以有效减少 SIMD IDLE。
 
-| ![large idle](img/large_idle.jpg) |  
+| ![large idle](large_idle.jpg) |  
 |:--:|  
 | *先发射负载小的块，再发射负载大的块，导致较大的 SIMD IDLE* |  
   
-| ![small idle](img/small_idle.jpg) |  
+| ![small idle](small_idle.jpg) |  
 |:--:|   
 | *先发射负载大的块，再发射负载小的块，可以减少 SIMD IDLE* |  
 
